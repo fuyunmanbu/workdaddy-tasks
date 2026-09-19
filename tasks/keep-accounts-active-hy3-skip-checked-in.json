@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 2,
+  "id": "keep-accounts-active-hy3-skip-checked-in",
+  "name": "逐账号例行发送（Hy3，剔除今日已完成登录任务的账号）",
+  "description": "先筛选所有账号：查询今日登录任务状态，剔除今日已完成的账号；对其余账号依次切换，用 hy3 新建会话发送 1+1=，按会话回执等待回复完成，最后恢复开始时的账号。全部账号已完成时直接提示，跳过切换。",
+  "enabled": true,
+  "concurrency": {
+    "policy": "skip"
+  },
+  "trigger": {
+    "type": "manual",
+    "types": [],
+    "oncePerNavigation": true
+  },
+  "schedule": {
+    "type": "manual"
+  },
+  "variables": {
+    "pendingCount": 0
+  },
+  "steps": [
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": false,
+      "steps": [
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "account.status",
+              "fields": [
+                "checkin.today"
+              ],
+              "saveAs": "todayStatus"
+            },
+            {
+              "op": "logic.if",
+              "condition": {
+                "left": "{{vars.todayStatus.checkin.today}}",
+                "operator": "truthy"
+              },
+              "then": [
+                {
+                  "op": "state.set",
+                  "scope": "account",
+                  "key": "pendingSend",
+                  "value": false,
+                  "ttlMs": 86400000
+                },
+                {
+                  "op": "log.write",
+                  "message": "账号 {account} 今日登录任务已完成，已从发送名单剔除",
+                  "params": {
+                    "account": "{{account.uid}}"
+                  }
+                }
+              ],
+              "else": [
+                {
+                  "op": "state.set",
+                  "scope": "account",
+                  "key": "pendingSend",
+                  "value": true,
+                  "ttlMs": 86400000
+                },
+                {
+                  "op": "value.number",
+                  "operator": "add",
+                  "values": ["{{vars.pendingCount}}", 1],
+                  "saveAs": "pendingCount"
+                },
+                {
+                  "op": "log.write",
+                  "message": "账号 {account} 今日登录任务未完成，列入发送名单",
+                  "params": {
+                    "account": "{{account.uid}}"
+                  }
+                }
+              ]
+            }
+          ],
+          "onError": [
+            {
+              "op": "state.set",
+              "scope": "account",
+              "key": "pendingSend",
+              "value": true,
+              "ttlMs": 86400000
+            },
+            {
+              "op": "value.number",
+              "operator": "add",
+              "values": ["{{vars.pendingCount}}", 1],
+              "saveAs": "pendingCount"
+            },
+            {
+              "op": "log.write",
+              "message": "账号 {account} 筛选失败：{reason}，按未完成处理",
+              "params": {
+                "account": "{{account.uid}}",
+                "reason": "{{vars.error.message}}"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "op": "logic.if",
+      "condition": {
+        "left": "{{vars.pendingCount}}",
+        "operator": "gt",
+        "right": 0
+      },
+      "then": [
+        {
+          "op": "account.forEach",
+          "accounts": "all",
+          "switch": true,
+          "steps": [
+        {
+          "op": "state.get",
+          "scope": "account",
+          "key": "pendingSend",
+          "saveAs": "shouldSend"
+        },
+        {
+          "op": "logic.if",
+          "condition": {
+            "left": "{{vars.shouldSend}}",
+            "operator": "truthy"
+          },
+          "then": [
+            {
+              "op": "logic.delay",
+              "ms": 1500
+            },
+            {
+              "op": "session.create",
+              "message": "1+1=",
+              "model": "hy3",
+              "saveAs": "receipt"
+            },
+            {
+              "op": "session.wait",
+              "timeoutMs": 180000,
+              "receipt": "{{vars.receipt}}"
+            }
+          ],
+          "else": [
+            {
+              "op": "log.write",
+              "message": "账号 {account} 已在筛选阶段剔除，跳过新建会话",
+              "params": {
+                "account": "{{account.uid}}"
+              }
+            }
+          ]
+        }
+      ]
+        }
+      ],
+      "else": [
+        {
+          "op": "log.write",
+          "message": "全部账号今日登录任务均已完成，跳过切换与发送"
+        },
+        {
+          "op": "notify.toast",
+          "level": "success",
+          "message": "所有账号今日均已完成，无需发送"
+        }
+      ]
+    }
+  ],
+  "onSuccess": [
+    {
+      "op": "notify.toast",
+      "level": "success",
+      "message": "任务执行完毕，已恢复开始时的账号"
+    }
+  ],
+  "onFailure": [
+    {
+      "op": "notify.toast",
+      "level": "error",
+      "message": "存在账号未完成处理，已尝试恢复开始时的账号"
+    }
+  ]
+}
