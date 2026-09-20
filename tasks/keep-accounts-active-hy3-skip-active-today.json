@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 3,
+  "id": "keep-accounts-active-hy3-skip-active-today",
+  "name": "逐账号例行发送（Hy3，跳过活跃地图今日已活跃的账号）",
+  "description": "先逐个查询账号的活跃地图今日活跃状态（activity.today → is_active，需完成一次对话才会被记录）；今日已活跃的账号直接剔除、不切换；对未活跃的账号依次切换，用 hy3 新建会话发送 1+1=，按会话回执等待回复完成以点亮今日热力墙；循环结束自动恢复开始时的账号。查询失败按「未活跃」处理（宁多发不漏发）。",
+  "enabled": true,
+  "concurrency": {
+    "policy": "skip"
+  },
+  "trigger": {
+    "type": "manual",
+    "types": [],
+    "oncePerNavigation": true
+  },
+  "schedule": {
+    "type": "manual"
+  },
+  "variables": {},
+  "steps": [
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": false,
+      "steps": [
+        {
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "account.status",
+              "fields": [
+                "activity.today"
+              ],
+              "saveAs": "todayStatus"
+            },
+            {
+              "op": "logic.if",
+              "condition": {
+                "left": "{{vars.todayStatus.activity.is_active}}",
+                "operator": "truthy"
+              },
+              "then": [
+                {
+                  "op": "state.set",
+                  "scope": "account",
+                  "key": "pendingSend",
+                  "value": false,
+                  "ttlMs": 86400000
+                },
+                {
+                  "op": "log.write",
+                  "message": "账号 {account} 活跃地图今日已活跃，已从发送名单剔除",
+                  "params": {
+                    "account": "{{account.uid}}"
+                  }
+                }
+              ],
+              "else": [
+                {
+                  "op": "state.set",
+                  "scope": "account",
+                  "key": "pendingSend",
+                  "value": true,
+                  "ttlMs": 86400000
+                },
+                {
+                  "op": "log.write",
+                  "message": "账号 {account} 活跃地图今日未活跃，列入发送名单",
+                  "params": {
+                    "account": "{{account.uid}}"
+                  }
+                }
+              ]
+            }
+          ],
+          "onError": [
+            {
+              "op": "state.set",
+              "scope": "account",
+              "key": "pendingSend",
+              "value": true,
+              "ttlMs": 86400000
+            },
+            {
+              "op": "log.write",
+              "message": "账号 {account} 活跃状态查询失败：{reason}，按未活跃处理",
+              "params": {
+                "account": "{{account.uid}}",
+                "reason": "{{vars.error.message}}"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "op": "account.forEach",
+      "accounts": "all",
+      "switch": true,
+      "prepare": [
+        {
+          "op": "state.get",
+          "scope": "account",
+          "key": "pendingSend",
+          "saveAs": "shouldSend"
+        }
+      ],
+      "condition": {
+        "left": "{{vars.shouldSend}}",
+        "operator": "truthy"
+      },
+      "steps": [
+        {
+          "op": "logic.delay",
+          "ms": 1500
+        },
+        {
+          "op": "session.create",
+          "message": "1+1=",
+          "model": "hy3",
+          "saveAs": "receipt"
+        },
+        {
+          "op": "session.wait",
+          "timeoutMs": 180000,
+          "receipt": "{{vars.receipt}}"
+        }
+      ]
+    }
+  ],
+  "onSuccess": [
+    {
+      "op": "notify.toast",
+      "level": "success",
+      "message": "已对今日未活跃的账号逐个发送完毕，并恢复开始时的账号"
+    }
+  ],
+  "onFailure": [
+    {
+      "op": "notify.toast",
+      "level": "error",
+      "message": "逐账号发送中断，已尝试恢复开始时的账号"
+    }
+  ]
+}
