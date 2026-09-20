@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "id": "keep-accounts-active-hy3-skip-active-today",
   "name": "逐账号例行发送（Hy3，跳过活跃地图今日已活跃的账号）",
-  "description": "先逐个查询账号的活跃地图今日活跃状态（activity.today → is_active，需完成一次对话才会被记录）；今日已活跃的账号直接剔除、不切换；对未活跃的账号依次切换，用 hy3 新建会话发送 1+1=，按会话回执等待回复完成以点亮今日热力墙；循环结束自动恢复开始时的账号。查询失败按「未活跃」处理（宁多发不漏发）。",
+  "description": "先逐个查询账号的活跃地图今日活跃状态（activity.today → is_active，需完成一次对话才会被记录）；今日已活跃的账号直接剔除、不切换；对未活跃的账号依次切换，用 hy3 新建会话发送 1+1=，按会话回执等待回复完成以点亮今日热力墙；循环结束自动恢复开始时的账号。查询失败按「未活跃」处理（宁多发不漏发）。发送阶段按账号隔离错误：单个账号发送失败或等待超时只记录日志并跳过，不会中断整轮、也不会拖住其余账号。",
   "enabled": true,
   "concurrency": {
     "policy": "skip"
@@ -110,19 +110,34 @@
       },
       "steps": [
         {
-          "op": "logic.delay",
-          "ms": 1500
-        },
-        {
-          "op": "session.create",
-          "message": "1+1=",
-          "model": "hy3",
-          "saveAs": "receipt"
-        },
-        {
-          "op": "session.wait",
-          "timeoutMs": 180000,
-          "receipt": "{{vars.receipt}}"
+          "op": "logic.catch",
+          "steps": [
+            {
+              "op": "logic.delay",
+              "ms": 800
+            },
+            {
+              "op": "session.create",
+              "message": "1+1=",
+              "model": "hy3",
+              "saveAs": "receipt"
+            },
+            {
+              "op": "session.wait",
+              "timeoutMs": 90000,
+              "receipt": "{{vars.receipt}}"
+            }
+          ],
+          "onError": [
+            {
+              "op": "log.write",
+              "message": "账号 {account} 本次发送未完成：{reason}，已跳过并继续下一个账号",
+              "params": {
+                "account": "{{account.uid}}",
+                "reason": "{{vars.error.message}}"
+              }
+            }
+          ]
         }
       ]
     }
